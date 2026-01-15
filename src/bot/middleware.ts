@@ -9,6 +9,7 @@ import {
   checkAndPromoteToWhitelist,
 } from '@/db/trust';
 import { WHITELIST_CONFIG } from '@/config';
+import { getOrCreateSpamTopic } from '@/bot/forum';
 
 
 export const messageFilterMiddleware = (env: Env) => async (ctx: Context, next: NextFunction) => {
@@ -70,11 +71,15 @@ export const messageFilterMiddleware = (env: Env) => async (ctx: Context, next: 
 
       // 发送到管理群组（如果配置了管理群组 ID）
       if (env.ADMIN_GID && chatId) {
-        // 先转发原消息到管理群组
+        // 获取或创建 Spam Topic
+        const spamTopicId = await getOrCreateSpamTopic(ctx.api, env);
+
+        // 先转发原消息到管理群组（如果有 Topic 则发送到 Topic）
         const forwardedMessage = await ctx.api.forwardMessage(
           env.ADMIN_GID,
           chatId,
-          ctx.message.message_id
+          ctx.message.message_id,
+          spamTopicId ? { message_thread_id: spamTopicId } : undefined
         );
 
         // 获取当前时间并格式化为 UTC+8 (yyyy-MM-dd HH:mm:ss)
@@ -91,14 +96,17 @@ export const messageFilterMiddleware = (env: Env) => async (ctx: Context, next: 
 
         const utcPlus8Time = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 
-        // 回复转发的消息，发送警告信息
+        // 回复转发的消息，发送警告信息（同一 Topic）
         await ctx.api.sendMessage(
           env.ADMIN_GID,
           `🚨 垃圾信息警告\n\n` +
           `发送者: ${senderName}${senderUser.username ? ` (@${senderUser.username})` : ''} (ID: ${senderId})\n` +
           `AI 判定: ${judgment}\n` +
           `时间: ${utcPlus8Time}`,
-          { reply_to_message_id: forwardedMessage.message_id }
+          {
+            reply_to_message_id: forwardedMessage.message_id,
+            ...(spamTopicId ? { message_thread_id: spamTopicId } : {})
+          }
         );
       }
 

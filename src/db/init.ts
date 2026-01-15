@@ -34,5 +34,30 @@ export async function initDatabase(env: Env): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_trust_status
     ON user_trust(trust_status)
   `).run();
+
+  // 创建 Forum Topic 表（存储系统级 Topic，如 Spam Topic）
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS forum_topics (
+      topic_type TEXT PRIMARY KEY,
+      topic_id INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `).run();
+
+  // 创建用户 Topic 映射表
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS user_topics (
+      user_id TEXT PRIMARY KEY,
+      topic_id INTEGER NOT NULL,
+      topic_name TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `).run();
+
+  // 创建 Topic ID 索引，用于通过 Topic ID 反查用户
+  await env.DB.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_user_topics_topic_id
+    ON user_topics(topic_id)
+  `).run();
 }
 

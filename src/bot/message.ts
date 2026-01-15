@@ -1,8 +1,13 @@
 import { Context } from "grammy";
 import { Env } from '@/env';
+import { getOrCreateUserTopic } from '@/bot/forum';
+import { getUserIdByTopicId } from '@/db/topics';
 
 /**
  * 消息处理器：实现用户与管理员之间的消息转发
+ * 支持两种模式：
+ * 1. 私聊模式：用户私聊 Bot，消息转发到管理员私聊或管理群组的用户专属 Topic
+ * 2. 群组模式：管理员在群组 Topic 内回复，Bot 转发给用户
  * @param env - 环境变量
  */
 export const messageHandler = (env: Env) => async (ctx: Context) => {
@@ -20,37 +25,59 @@ export const messageHandler = (env: Env) => async (ctx: Context) => {
 
   const senderId = senderUser.id;
   const adminUid = Number(env.ADMIN_UID);
+  const adminGid = env.ADMIN_GID ? String(env.ADMIN_GID) : null;
 
-  // 检查是否是私聊消息
-  const isPrivateChat = ctx.chat?.type === 'private';
+  // 检查聊天类型
+  const chatType = ctx.chat?.type;
+  const isPrivateChat = chatType === 'private';
+  const isGroupChat = chatType === 'supergroup' || chatType === 'group';
 
-  if (!isPrivateChat) {
-    // 不是私聊消息，不处理
-    return;
-  }
-
-  // 情况1：普通用户给 bot 发送消息，转发给管理员
-  if (senderId !== adminUid) {
-
+  // 情况1：普通用户私聊 Bot，转发到管理群组的用户专属 Topic
+  if (isPrivateChat && senderId !== adminUid) {
     try {
-      // 使用 forwardMessage 转发原始消息给管理员
-      const forwardedMessage = await ctx.api.forwardMessage(
-        adminUid,
-        senderId,
-        ctx.message.message_id
-      );
+      // 获取发送者姓名
+      const senderName = `${senderUser.first_name || ''}${senderUser.last_name ? ' ' + senderUser.last_name : ''}`.trim();
+      const displayName = senderName || `User ${senderId}`;
 
-      // 存储消息映射关系：bot转发的消息ID -> 原始用户的chatID
-      // 用于管理员回复时找到原始用户
-      await env.DB.prepare(`
-        INSERT INTO message_mappings (forwarded_message_id, original_user_chat_id, created_at)
-        VALUES (?, ?, ?)
-      `).bind(
-        forwardedMessage.message_id,
-        String(senderId),
-        Date.now()
-      ).run();
+      // 如果配置了管理群组，使用 Topic 模式
+      if (adminGid) {
+        // 获取或创建用户专属 Topic
+        const userTopicId = await getOrCreateUserTopic(ctx.api, env, String(senderId), displayName);
 
+        // 转发到管理群组（如果有 Topic 则发送到 Topic）
+        const forwardedMessage = await ctx.api.forwardMessage(
+          adminGid,
+          senderId,
+          ctx.message.message_id,
+          userTopicId ? { message_thread_id: userTopicId } : undefined
+        );
+
+        // 存储消息映射关系
+        await env.DB.prepare(`
+          INSERT INTO message_mappings (forwarded_message_id, original_user_chat_id, created_at)
+          VALUES (?, ?, ?)
+        `).bind(
+          forwardedMessage.message_id,
+          String(senderId),
+          Date.now()
+        ).run();
+      } else {
+        // 回退：转发到管理员私聊
+        const forwardedMessage = await ctx.api.forwardMessage(
+          adminUid,
+          senderId,
+          ctx.message.message_id
+        );
+
+        await env.DB.prepare(`
+          INSERT INTO message_mappings (forwarded_message_id, original_user_chat_id, created_at)
+          VALUES (?, ?, ?)
+        `).bind(
+          forwardedMessage.message_id,
+          String(senderId),
+          Date.now()
+        ).run();
+      }
     } catch (error) {
       await ctx.reply('抱歉，消息发送失败，请稍后重试。');
     }
@@ -58,19 +85,16 @@ export const messageHandler = (env: Env) => async (ctx: Context) => {
     return;
   }
 
-  // 情况2：管理员回复消息，转发给原始用户
-  if (senderId === adminUid) {
-    // 检查管理员是否在回复某条消息
+  // 情况2：管理员私聊 Bot 回复消息
+  if (isPrivateChat && senderId === adminUid) {
     const replyToMessage = ctx.message?.reply_to_message;
 
     if (!replyToMessage) {
-      // 管理员没有回复任何消息，可能是管理员直接给 bot 发消息
       await ctx.reply('请回复一条用户消息以发送回复。');
       return;
     }
 
     try {
-      // 从 D1 中查找原始用户的 chat ID
       const result = await env.DB.prepare(`
         SELECT original_user_chat_id
         FROM message_mappings
@@ -82,12 +106,58 @@ export const messageHandler = (env: Env) => async (ctx: Context) => {
         return;
       }
 
-      // 转发管理员的回复给原始用户
       await ctx.api.sendMessage(
         Number(result.original_user_chat_id),
         `${msg}`
       );
+    } catch (error) {
+      await ctx.reply('❌ 回复发送失败，请检查用户是否已屏蔽机器人。');
+    }
 
+    return;
+  }
+
+  // 情况3：在管理群组 Topic 内发消息
+  if (isGroupChat && adminGid && String(chatId) === adminGid) {
+    const replyToMessage = ctx.message?.reply_to_message;
+    const messageThreadId = ctx.message?.message_thread_id;
+
+    // 必须在某个 Topic 内
+    if (!messageThreadId) {
+      return;
+    }
+
+    try {
+      let targetUserId: string | null = null;
+
+      // 优先：如果回复了某条消息，尝试从消息映射中查找用户
+      if (replyToMessage) {
+        const mappingResult = await env.DB.prepare(`
+          SELECT original_user_chat_id
+          FROM message_mappings
+          WHERE forwarded_message_id = ?
+        `).bind(replyToMessage.message_id).first<{ original_user_chat_id: string }>();
+
+        if (mappingResult) {
+          targetUserId = mappingResult.original_user_chat_id;
+        }
+      }
+
+      // 回退：通过 Topic ID 查找用户（在用户 Topic 内直接发消息）
+      if (!targetUserId) {
+        targetUserId = await getUserIdByTopicId(env.DB, messageThreadId);
+      }
+
+      if (!targetUserId) {
+        // 无法确定目标用户，静默返回（可能是 Spam Topic 或其他系统 Topic）
+        return;
+      }
+
+      // 发送消息给用户
+      await ctx.api.sendMessage(
+        Number(targetUserId),
+        `${msg}`
+      );
     } catch (error) {
       await ctx.reply('❌ 回复发送失败，请检查用户是否已屏蔽机器人。');
     }
