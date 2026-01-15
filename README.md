@@ -15,8 +15,9 @@ Telegram Watchdog 是一个功能强大的 Telegram 机器人，主要用于：
 
 - 🤖 **AI 智能过滤**：基于 LLM 的智能垃圾信息识别
 - ✅ **自动白名单**：用户连续通过 3 次检测后自动加入白名单，跳过后续 AI 检测
-- 👮 **管理员命令**：支持 `/trust` 和 `/untrust` 命令手动管理用户信任度
+- 👮 **管理员命令**：支持 `/trust`、`/untrust` 和 `/getid` 命令
 - 💬 **双向消息转发**：用户消息转发给管理员，管理员可直接回复
+- 🧵 **Forum Topic 管理**：自动为每个用户创建独立 Topic，垃圾消息集中到 Spam Topic
 - 🗄️ **持久化存储**：使用 Cloudflare D1 数据库存储消息映射和用户信任度
 - ⚡ **边缘计算**：部署在 Cloudflare Workers，全球低延迟响应
 - 🔒 **安全验证**：Webhook 请求使用密钥验证，确保安全性
@@ -62,15 +63,17 @@ telegram-watchdog/
 │   ├── config.ts             # 白名单系统配置常量
 │   ├── bot/
 │   │   ├── command.ts        # Bot 命令处理器（/start 等）
-│   │   ├── commands.ts       # 管理员命令（/trust、/untrust）
+│   │   ├── commands.ts       # 管理员命令（/trust、/untrust、/getid）
 │   │   ├── middleware.ts     # 垃圾信息过滤和白名单检查中间件
-│   │   └── message.ts        # 消息转发处理器
+│   │   ├── message.ts        # 消息转发处理器
+│   │   └── forum.ts          # Forum Topic 管理
 │   ├── llm/
 │   │   ├── client.ts         # LLM API 客户端和垃圾信息检测
 │   │   └── prompt.ts         # LLM 提示词模板
 │   └── db/
 │       ├── init.ts           # D1 数据库初始化和清理
-│       └── trust.ts          # 用户信任度数据库操作
+│       ├── trust.ts          # 用户信任度数据库操作
+│       └── topics.ts         # Forum Topic 数据库操作
 ├── package.json              # 项目依赖配置
 ├── wrangler.jsonc            # Cloudflare Workers 配置
 ├── tsconfig.json             # TypeScript 配置
@@ -82,11 +85,13 @@ telegram-watchdog/
 - **src/index.ts**：应用入口，配置 Hono 路由和 Grammy Bot，实现懒加载初始化
 - **src/config.ts**：白名单系统配置，包括自动晋升阈值等参数
 - **src/bot/middleware.ts**：拦截所有消息，检查白名单状态并调用 LLM 进行垃圾信息检测
-- **src/bot/commands.ts**：处理管理员命令（`/trust`、`/untrust`）
+- **src/bot/commands.ts**：处理管理员命令（`/trust`、`/untrust`、`/getid`）
 - **src/bot/message.ts**：处理用户与管理员之间的消息转发逻辑
+- **src/bot/forum.ts**：Forum Topic 创建和管理，支持用户 Topic 名称自动更新
 - **src/llm/client.ts**：封装 OpenAI SDK，提供统一的 LLM 调用接口
 - **src/db/init.ts**：创建和维护 D1 数据库表结构
 - **src/db/trust.ts**：用户信任度相关的数据库操作
+- **src/db/topics.ts**：Forum Topic 映射相关的数据库操作
 
 ## 🔄 业务流程
 
@@ -218,6 +223,29 @@ graph TD
 ⚠️ 用户已移除白名单，重新进入监控
 ```
 
+#### `/getid` - 获取 ID 信息
+
+**使用方法：**
+在任意聊天中发送 `/getid`
+
+**返回信息：**
+- 你的用户 ID
+- 当前聊天 ID
+- 聊天类型
+- Topic ID（如果在 Forum Topic 内）
+
+**示例：**
+```
+/getid
+    ↓ Bot 响应
+📋 ID 信息
+
+👤 你的用户 ID: `123456789`
+💬 当前聊天 ID: `-1001234567890`
+📝 聊天类型: supergroup
+🧵 Topic ID: `123`
+```
+
 ### 白名单配置
 
 可以在 `src/config.ts` 中调整白名单系统的行为：
@@ -300,6 +328,86 @@ export const WHITELIST_CONFIG = {
 5. 用户下次发消息 → 重新进入 AI 检测
 ```
 
+## 🧵 Forum Topic 功能
+
+### 功能概述
+
+当配置了 `ADMIN_GID`（管理群组）且该群组启用了 Forum 功能时，Bot 会自动使用 Topic 来组织消息：
+
+- **Spam Topic**：所有垃圾消息集中在 `🚨 Spam` Topic 中
+- **用户 Topic**：每个用户拥有独立的 `👤 用户名` Topic
+
+### 前置要求
+
+1. **创建 Forum 群组**：
+   - 创建一个超级群组
+   - 在群组设置中启用 "Topics"（话题）功能
+
+2. **Bot 权限**：
+   - 将 Bot 添加为群组管理员
+   - 确保 Bot 拥有 `can_manage_topics` 权限
+
+### 工作流程
+
+#### 垃圾消息处理
+```
+用户发送垃圾消息
+    ↓
+AI 检测为 SPAM
+    ↓
+检查/创建 "🚨 Spam" Topic
+    ↓
+将消息转发到 Spam Topic
+    ↓
+发送警告信息到同一 Topic
+```
+
+#### 正常消息处理
+```
+用户发送正常消息
+    ↓
+检查用户是否已有 Topic
+    ↓
+├─ 无 → 创建 "👤 用户名" Topic
+└─ 有 → 检查用户名是否变更，自动更新 Topic 名称
+    ↓
+将消息转发到用户的 Topic
+```
+
+#### 管理员回复
+```
+管理员在用户 Topic 内发送消息
+    ↓
+Bot 自动识别 Topic 对应的用户
+    ↓
+将消息发送给该用户
+```
+
+### 特性
+
+- **直接发消息**：在用户 Topic 内直接打字即可发送给用户，无需回复特定消息
+- **用户名自动更新**：当用户修改昵称后，Topic 名称会自动同步更新
+- **回退机制**：如果 Topic 创建失败（权限不足等），自动回退到普通消息发送
+
+### 数据库表
+
+#### `forum_topics` - 系统 Topic 存储
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `topic_type` | TEXT | Topic 类型（如 `spam`）（主键） |
+| `topic_id` | INTEGER | Telegram Topic ID |
+| `created_at` | INTEGER | 创建时间戳 |
+
+#### `user_topics` - 用户 Topic 映射
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `user_id` | TEXT | 用户 Telegram ID（主键） |
+| `topic_id` | INTEGER | 用户专属 Topic ID |
+| `topic_name` | TEXT | Topic 名称 |
+| `created_at` | INTEGER | 创建时间戳 |
+
 ## 🚀 部署指南
 
 ### 前置准备
@@ -350,10 +458,11 @@ npm run deploy
    - 在 Telegram 中找到 [@userinfobot](https://t.me/userinfobot)
    - 发送任意消息，Bot 会返回你的用户 ID
 
-2. **获取管理群组 ID**（可选）：
-   - 创建一个群组并将 Bot 添加进去
-   - 在 Telegram 中找到 [@getidsbot](https://t.me/getidsbot)
-   - 将 @getidsbot 添加到群组，它会显示群组 ID（负数，如：`-1001234567890`）
+2. **获取管理群组 ID**（可选，推荐启用 Forum Topic 功能）：
+   - 创建一个超级群组
+   - 在群组设置中启用 "Topics"（话题）功能
+   - 将 Bot 添加到群组并设为管理员（需要 `can_manage_topics` 权限）
+   - 在群组内发送 `/getid`，Bot 会返回群组 ID（负数，如：`-1001234567890`）
 
 ### 步骤 5：创建 D1 数据库
 
@@ -379,7 +488,7 @@ npm run deploy
 | `BOT_TOKEN` | ✅ | Telegram Bot Token | `123456:ABC-DEF...` |
 | `BOT_SECRET` | ✅ | Webhook 验证密钥 | 任意随机字符串 |
 | `ADMIN_UID` | ✅ | 管理员 Telegram 用户 ID | `123456789` |
-| `ADMIN_GID` | ❌ | 管理群组 ID（用于垃圾信息警报） | `-1001234567890` |
+| `ADMIN_GID` | ❌ | 管理群组 ID（启用 Forum 功能可使用 Topic） | `-1001234567890` |
 | `LLM_API` | ✅ | LLM API Base URL | `https://api.openai.com/v1` |
 | `LLM_MODEL` | ✅ | LLM 模型名称 | `gpt-3.5-turbo` |
 | `LLM_KEY` | ✅ | LLM API Key | `sk-...` |
