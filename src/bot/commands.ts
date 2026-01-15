@@ -15,6 +15,11 @@ export function registerAdminCommands(bot: Bot, env: Env) {
   bot.command('untrust', async (ctx: Context) => {
     await handleUntrustCommand(ctx, env);
   });
+
+  // /getid command - get chat/user ID
+  bot.command('getid', async (ctx: Context) => {
+    await handleGetIdCommand(ctx);
+  });
 }
 
 /**
@@ -102,4 +107,25 @@ async function handleUntrustCommand(ctx: Context, env: Env): Promise<void> {
     console.error('Error in /untrust command:', error);
     await ctx.reply('❌ 处理命令时出错，请稍后重试');
   }
+}
+
+/**
+ * Handle /getid command - get current chat and user ID
+ */
+async function handleGetIdCommand(ctx: Context): Promise<void> {
+  const chatId = ctx.chat?.id;
+  const chatType = ctx.chat?.type;
+  const userId = ctx.from?.id;
+  const messageThreadId = ctx.message?.message_thread_id;
+
+  let response = `📋 ID 信息\n\n`;
+  response += `👤 你的用户 ID: \`${userId}\`\n`;
+  response += `💬 当前聊天 ID: \`${chatId}\`\n`;
+  response += `📝 聊天类型: ${chatType}`;
+
+  if (messageThreadId) {
+    response += `\n🧵 Topic ID: \`${messageThreadId}\``;
+  }
+
+  await ctx.reply(response, { parse_mode: 'Markdown' });
 }
