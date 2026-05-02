@@ -1,0 +1,14 @@
+node_modules
+.git
+.gitignore
+.wrangler
+.dev.vars
+.env
+.env.*
+*.log
+*.md
+Dockerfile
+docker-compose.yml
+.dockerignore
+.claude
+worker-configuration.d.ts

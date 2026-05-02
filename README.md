@@ -1,6 +1,6 @@
 # Telegram Watchdog
 
-一个部署在 Cloudflare Workers 上的智能 Telegram Bot，提供 AI 驱动的垃圾信息过滤和管理员消息转发功能。
+一个智能 Telegram Bot，提供 AI 驱动的垃圾信息过滤和管理员消息转发功能。**支持 Cloudflare Workers 和 Docker 自托管两种部署方式**，可按需选择。
 
 ## 📋 项目介绍
 
@@ -18,51 +18,236 @@ Telegram Watchdog 是一个功能强大的 Telegram 机器人，主要用于：
 - 👮 **管理员命令**：支持 `/trust`、`/untrust` 和 `/getid` 命令
 - 💬 **双向消息转发**：用户消息转发给管理员，管理员可直接回复
 - 🧵 **Forum Topic 管理**：自动为每个用户创建独立 Topic，垃圾消息集中到 Spam Topic
-- 🗄️ **持久化存储**：使用 Cloudflare D1 数据库存储消息映射和用户信任度
-- ⚡ **边缘计算**：部署在 Cloudflare Workers，全球低延迟响应
+- 🗄️ **持久化存储**：D1 或 SQLite 文件，存储消息映射和用户信任度
+- 🚢 **双部署支持**：Cloudflare Workers（边缘 / 零运维）或 Docker（自托管 / 数据自控）
 - 🔒 **安全验证**：Webhook 请求使用密钥验证，确保安全性
 
 ## 🛠️ 技术栈
 
-- **[Hono](https://hono.dev/)** - 轻量级 Web 框架，专为 Cloudflare Workers 优化
+- **[Hono](https://hono.dev/)** - 轻量级 Web 框架，可同时跑在 Workers 与 Node
 - **[Grammy](https://grammy.dev/)** - 现代化的 Telegram Bot 框架
 - **[OpenAI SDK](https://github.com/openai/openai-node)** - 用于调用 LLM API 进行垃圾信息检测
-- **[Cloudflare Workers](https://workers.cloudflare.com/)** - Serverless 计算平台
-- **[Cloudflare D1](https://developers.cloudflare.com/d1/)** - 边缘 SQLite 数据库
 - **[TypeScript](https://www.typescriptlang.org/)** - 类型安全的开发语言
-- **[Wrangler](https://developers.cloudflare.com/workers/wrangler/)** - Cloudflare Workers CLI 工具
+
+按部署方式不同，运行时分别用：
+
+| 维度 | Cloudflare Workers | Docker / Node |
+|------|-------------------|---------------|
+| 运行时 | [Cloudflare Workers](https://workers.cloudflare.com/) | Node.js **24+** |
+| 数据库 | [Cloudflare D1](https://developers.cloudflare.com/d1/) | `node:sqlite`（内置）+ 文件 Volume |
+| 入口 | [src/index.ts](src/index.ts) | [src/server.ts](src/server.ts) |
+| 构建 / 发布 | [Wrangler](https://developers.cloudflare.com/workers/wrangler/) | Dockerfile（基于 `node:24-bookworm-slim`） |
+
+业务代码完全共享，差异收敛在数据库适配层和入口文件。
 
 ## 📦 所需外部组件
 
-### 必需服务
+无论哪种部署方式，都需要以下基础组件：
 
-1. **Telegram Bot Token**
-   - 通过 [@BotFather](https://t.me/botfather) 创建 Bot 并获取 Token
+1. **Telegram Bot Token** — 通过 [@BotFather](https://t.me/botfather) 创建
+2. **管理员 Telegram 账户** — 用于接收转发消息
+3. **管理群组**（推荐启用 Forum 模式）— 用于接收垃圾警报和按用户分 Topic
+4. **LLM API 服务** — OpenAI 或兼容 API（提供 Base URL 和 API Key）
 
-2. **Cloudflare 账户**
-   - Workers 服务（免费版即可开始）
-   - D1 数据库（免费版提供 5GB 存储）
-   - 自定义域名（用于 Webhook，Workers 默认域名也可用）
+部署方式特定要求：
 
-3. **LLM API 服务**
-   - OpenAI API 或兼容的 API 服务
-   - 需要 API Key 和 Base URL
+- **Cloudflare Workers**：Cloudflare 账户（含 Workers 与 D1，免费额度即可起步）+ 一个域名（Workers 默认子域也行）
+- **Docker**：一台 Docker 主机 + 一个公网 HTTPS 域名（用反代终止 TLS）
 
-### 其他组件
+---
 
-- **管理员 Telegram 账户**：用于接收转发消息
-- **管理群组**：用于接收垃圾信息警报
+## 🚀 部署指南
+
+本项目提供两种部署方式，二选一即可：
+
+| 方式 | 适合场景 | 数据库 | 入口 |
+|------|---------|-------|------|
+| **A. Cloudflare Workers** | 零运维、全球边缘、免费额度充足 | D1 | [src/index.ts](src/index.ts) |
+| **B. Docker 自托管** | 私有环境、需要数据完全自管 | `node:sqlite` + Volume | [src/server.ts](src/server.ts) |
+
+### 通用前置步骤（两种方式都要做）
+
+#### 1. 创建 Telegram Bot
+
+1. 在 Telegram 中找到 [@BotFather](https://t.me/botfather)
+2. 发送 `/newbot` 命令创建新 Bot
+3. 按提示设置 Bot 名称和用户名
+4. 保存 BotFather 返回的 **Bot Token**（格式如：`123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`）
+
+#### 2. 获取 Telegram ID
+
+1. **管理员用户 ID**：在 Telegram 中找到 [@userinfobot](https://t.me/userinfobot)，发送任意消息即可获得
+2. **管理群组 ID**（可选，推荐启用 Forum Topic 功能）：
+   - 创建一个超级群组
+   - 在群组设置中启用 "Topics"（话题）功能
+   - 将 Bot 添加到群组并设为管理员（需要 `can_manage_topics` 权限）
+   - 在群组内发送 `/getid`，Bot 会返回群组 ID（负数，如：`-1001234567890`）
+
+#### 3. 克隆代码
+
+```bash
+git clone <your-repo-url>
+cd telegram-watchdog
+```
+
+### 环境变量清单
+
+两种部署方式使用同一组环境变量：
+
+| 变量名 | 必需 | 说明 | 示例 |
+|--------|------|------|------|
+| `DOMAIN` | ✅ | 公网域名（必须 HTTPS），webhook 指向 `${DOMAIN}/webhook` | `https://bot.example.com` |
+| `BOT_TOKEN` | ✅ | Telegram Bot Token | `123456:ABC-DEF...` |
+| `BOT_SECRET` | ✅ | Webhook 验证密钥（自己生成的随机字符串） | 任意随机字符串 |
+| `ADMIN_UID` | ✅ | 管理员 Telegram 用户 ID | `123456789` |
+| `ADMIN_GID` | ❌ | 管理群组 ID（启用后开启 Forum Topic 模式） | `-1001234567890` |
+| `LLM_API` | ✅ | LLM API Base URL | `https://api.openai.com/v1` |
+| `LLM_MODEL` | ✅ | LLM 模型名称 | `gpt-3.5-turbo` |
+| `LLM_KEY` | ✅ | LLM API Key | `sk-...` |
+| `PORT` | ❌（仅 Docker） | 容器监听端口，默认 `3000` | `3000` |
+| `DB_PATH` | ❌（仅 Docker） | SQLite 文件路径，默认 `/data/watchdog.db` | `/data/watchdog.db` |
+
+---
+
+### 方式 A：Cloudflare Workers
+
+#### A1. 安装依赖
+
+```bash
+npm install
+```
+
+#### A2. 创建 D1 数据库
+
+1. 在 Cloudflare 控制面板中，导航至 **D1 SQL 数据库** 页面
+2. 选择 **创建数据库**，命名为 `watchdog`
+3. [wrangler.jsonc](wrangler.jsonc) 已配置好绑定（`binding: "DB"`）
+
+#### A3. 部署
+
+```bash
+# 第一次运行会出现登录链接，浏览器打开后授权登录，再重新运行
+npm run deploy
+```
+
+部署成功后会输出 Worker URL，例如 `https://telegram-watchdog.your-account.workers.dev`。
+
+#### A4. 配置环境变量（在 Cloudflare 仪表板）
+
+1. 进入 **Workers & Pages** → 选择你的 Worker → **设置** → **变量和机密**
+2. 选择 **添加** → **密钥** 类型，逐个录入上面环境变量清单中的值（除 `PORT` / `DB_PATH` 外都需要）
+
+---
+
+### 方式 B：Docker 自托管
+
+镜像由 GitHub Actions 自动构建并推送到 GHCR（基于 `node:24-bookworm-slim`，无原生模块编译）：
+
+- **镜像地址**：`ghcr.io/pupilcc/telegram-watchdog:latest`
+- **CI 配置**：[.github/workflows/release-docker-image.yml](.github/workflows/release-docker-image.yml) — `master` 分支推送和打 tag 时自动发布
+
+#### B1. 准备部署文件和 `.env`
+
+如果只是部署、不需要源码，跳过 `git clone`，直接拉取这两个文件即可：
+
+```bash
+mkdir telegram-watchdog && cd telegram-watchdog
+
+# docker-compose.yml
+curl -O https://raw.githubusercontent.com/pupilcc/telegram-watchdog/master/docker-compose.yml
+
+# .env 模板
+curl -o .env https://raw.githubusercontent.com/pupilcc/telegram-watchdog/master/.env.example
+```
+
+然后编辑 `.env`，填入 `DOMAIN` / `BOT_TOKEN` / `BOT_SECRET` / `ADMIN_UID` / `LLM_KEY` 等（参考上面的[环境变量清单](#环境变量清单)）。
+
+#### B2. 准备公网 HTTPS 反代
+
+Telegram 要求 webhook 必须 HTTPS。容器本身只监听 HTTP（默认 3000），**必须**在前面套一层反向代理（Caddy / Nginx / Traefik / Cloudflare Tunnel 等）来终止 TLS，并把 `DOMAIN` 指向该公网地址。
+
+最简的 Caddy 配置示例：
+
+```
+watchdog.example.com {
+    reverse_proxy localhost:3000
+}
+```
+
+#### B3. 启动容器
+
+**方式一：docker compose（推荐）**
+
+仓库已附带 [docker-compose.yml](docker-compose.yml)，默认拉取 `ghcr.io/pupilcc/telegram-watchdog:latest`。把 `docker-compose.yml` 和 `.env` 放在同一目录后：
+
+```bash
+docker compose up -d
+docker compose logs -f watchdog          # 查看日志，确认 setWebhook 成功
+
+# 升级到最新镜像
+docker compose pull && docker compose up -d
+```
+
+**方式二：docker run**
+
+```bash
+docker run -d --name telegram-watchdog \
+  --env-file .env \
+  -p 3000:3000 \
+  -v telegram-watchdog-data:/data \
+  --restart unless-stopped \
+  ghcr.io/pupilcc/telegram-watchdog:latest
+```
+
+> 如果你 fork 了仓库或本地修改了源码，可以 `docker compose up -d --build`（同时取消 [docker-compose.yml](docker-compose.yml) 里 `build: .` 的注释）从源码构建镜像。
+
+#### B4. 数据持久化
+
+SQLite 文件位于容器内 `/data/watchdog.db`，对应 `docker-compose.yml` 的 `watchdog-data` 命名 volume。`docker compose down` **不会**删除该 volume；需显式 `docker volume rm telegram-watchdog_watchdog-data` 才会清空数据。
+
+#### B5. 本地开发（不进容器）
+
+```bash
+nvm use 24                  # 或确保 node --version >= v24
+npm install
+cp .env.example .env        # DB_PATH 可改为本地路径如 ./watchdog.db
+npm run dev:node            # tsx watch，文件改动自动重启
+```
+
+可用 `ngrok http 3000` 暴露本地端口拿到 HTTPS URL，把 `DOMAIN` 改为 ngrok 地址即可联调。
+
+---
+
+### 验证部署（两种方式通用）
+
+1. **检查 Webhook 是否设置成功**：
+   ```bash
+   curl https://api.telegram.org/bot<BOT_TOKEN>/getWebhookInfo
+   ```
+   `url` 字段应为 `${DOMAIN}/webhook`
+
+2. **健康检查**：访问 `https://${DOMAIN}/` 应返回 `Hello Hono!`
+
+3. **测试 Bot 功能**：
+   - 在 Telegram 中向 Bot 发送消息，检查管理员是否收到转发
+   - 回复转发的消息，检查是否发送给原始用户
+
+4. **测试垃圾信息检测**：发送明显的广告或垃圾信息，检查管理群组是否收到警报
+
+---
 
 ## 📁 项目代码结构
 
 ```
 telegram-watchdog/
 ├── src/
-│   ├── index.ts              # 主入口文件，Hono 应用和 Bot 初始化
-│   ├── env.ts                # TypeScript 环境变量类型定义
+│   ├── index.ts              # Cloudflare Workers 入口（Hono + 懒初始化）
+│   ├── server.ts             # Node / Docker 入口（@hono/node-server）
+│   ├── app.ts                # 共享 bot 工厂（两种入口都调用）
+│   ├── env.ts                # Env 类型定义
 │   ├── config.ts             # 白名单系统配置常量
 │   ├── bot/
-│   │   ├── command.ts        # Bot 命令处理器（/start 等）
+│   │   ├── command.ts        # /start 等命令处理器
 │   │   ├── commands.ts       # 管理员命令（/trust、/untrust、/getid）
 │   │   ├── middleware.ts     # 垃圾信息过滤和白名单检查中间件
 │   │   ├── message.ts        # 消息转发处理器
@@ -71,27 +256,34 @@ telegram-watchdog/
 │   │   ├── client.ts         # LLM API 客户端和垃圾信息检测
 │   │   └── prompt.ts         # LLM 提示词模板
 │   └── db/
-│       ├── init.ts           # D1 数据库初始化和清理
+│       ├── client.ts         # 通用 DBClient 接口（D1 子集）
+│       ├── sqlite-adapter.ts # node:sqlite 适配器（Docker 用）
+│       ├── init.ts           # 数据库表结构初始化
 │       ├── trust.ts          # 用户信任度数据库操作
 │       └── topics.ts         # Forum Topic 数据库操作
-├── package.json              # 项目依赖配置
+├── Dockerfile                # Docker 镜像（Node 24，无原生编译）
+├── docker-compose.yml        # 单服务编排，含数据 volume
+├── .dockerignore
+├── .env.example              # 环境变量样板
+├── package.json
 ├── wrangler.jsonc            # Cloudflare Workers 配置
-├── tsconfig.json             # TypeScript 配置
-└── README.md                 # 项目说明文档
+├── tsconfig.json
+└── README.md
 ```
 
 ### 核心文件说明
 
-- **src/index.ts**：应用入口，配置 Hono 路由和 Grammy Bot，实现懒加载初始化
-- **src/config.ts**：白名单系统配置，包括自动晋升阈值等参数
+- **src/index.ts**：Workers 入口；`c.env` 是请求作用域的，因此 bot 在第一次请求时懒初始化
+- **src/server.ts**：Node 入口；启动时从 `process.env` 读配置、打开 SQLite、设置 webhook 并监听端口
+- **src/app.ts**：共享的 `setupBot(env)` 工厂；两个入口都调用它装配命令、过滤中间件、消息处理器
+- **src/db/client.ts**：业务代码统一面向的 `DBClient` 接口（D1 API 的最小子集）；`D1Database` 与 sqlite-adapter 都满足
+- **src/db/sqlite-adapter.ts**：把 `node:sqlite` 的同步 `DatabaseSync` 包装成异步的 `DBClient`，使 db/* 中的查询代码与 D1 调用方式完全一致
 - **src/bot/middleware.ts**：拦截所有消息，检查白名单状态并调用 LLM 进行垃圾信息检测
 - **src/bot/commands.ts**：处理管理员命令（`/trust`、`/untrust`、`/getid`）
 - **src/bot/message.ts**：处理用户与管理员之间的消息转发逻辑
 - **src/bot/forum.ts**：Forum Topic 创建和管理，支持用户 Topic 名称自动更新
 - **src/llm/client.ts**：封装 OpenAI SDK，提供统一的 LLM 调用接口
-- **src/db/init.ts**：创建和维护 D1 数据库表结构
-- **src/db/trust.ts**：用户信任度相关的数据库操作
-- **src/db/topics.ts**：Forum Topic 映射相关的数据库操作
+- **src/db/init.ts**：创建和维护数据库表结构
 
 ## 🔄 业务流程
 
@@ -121,7 +313,7 @@ graph TD
     F --> S
     S --> T{是否为私聊?}
     T -->|是| U[转发消息给管理员]
-    U --> V[保存消息映射到 D1]
+    U --> V[保存消息映射到数据库]
     T -->|否| W[忽略群组消息]
     C --> S
 ```
@@ -132,7 +324,7 @@ graph TD
 graph TD
     A[管理员回复转发的消息] --> B{是否在回复消息?}
     B -->|否| C[提示需要回复消息]
-    B -->|是| D[从 D1 查询原始用户 ID]
+    B -->|是| D[从数据库查询原始用户 ID]
     D --> E{找到映射?}
     E -->|否| F[提示未找到映射]
     E -->|是| G[发送回复给原始用户]
@@ -408,124 +600,29 @@ Bot 自动识别 Topic 对应的用户
 | `topic_name` | TEXT | Topic 名称 |
 | `created_at` | INTEGER | 创建时间戳 |
 
-## 🚀 部署指南
-
-### 前置准备
-
-**安装 Node.js 和 npm**
-
-```bash
-# 检查是否已安装
-node --version
-npm --version
-
-# 如未安装，请访问 https://nodejs.org/ 下载安装
-# 推荐使用 Node.js 18.x 或更高版本
-```
-
-### 步骤 1：克隆和安装依赖
-
-```bash
-# 克隆项目（或下载源码）
-git clone <your-repo-url>
-cd telegram-watchdog
-
-# 安装项目依赖
-npm install
-```
-
-### 步骤 2：上传到 Workers
-
-```bash
-# 部署到 Cloudflare Workers
-# 第一次运行会出现登录链接，浏览器打开后授权登录，再重新运行命令
-npm run deploy
-
-# 部署成功后，会输出 Worker 的 URL
-# 例如：https://telegram-watchdog.your-account.workers.dev
-```
-
-### 步骤 3：创建 Telegram Bot
-
-1. 在 Telegram 中找到 [@BotFather](https://t.me/botfather)
-2. 发送 `/newbot` 命令创建新 Bot
-3. 按提示设置 Bot 名称和用户名
-4. 保存 BotFather 返回的 **Bot Token**（格式如：`123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`）
-
-### 步骤 4：获取 Telegram ID
-
-1. **获取管理员用户 ID**：
-   - 在 Telegram 中找到 [@userinfobot](https://t.me/userinfobot)
-   - 发送任意消息，Bot 会返回你的用户 ID
-
-2. **获取管理群组 ID**（可选，推荐启用 Forum Topic 功能）：
-   - 创建一个超级群组
-   - 在群组设置中启用 "Topics"（话题）功能
-   - 将 Bot 添加到群组并设为管理员（需要 `can_manage_topics` 权限）
-   - 在群组内发送 `/getid`，Bot 会返回群组 ID（负数，如：`-1001234567890`）
-
-### 步骤 5：创建 D1 数据库
-
-1. 在 Cloudflare 控制面板中，导航至 D1 SQL 数据库页面
-2. 选择“创建数据库”
-3. 数据库命名为 `watchdog`
-4. 点击创建
-
-
-### 步骤 6：配置环境变量
-
-1. 在 Cloudflare 仪表板中，转到 Workers & Pages 页面
-2. 在“概览”中，选择您的 Worker
-3. 选择"设置"
-4. 在"变量和机密"下，选择"添加"
-5. 选择"密钥"类型，输入一个变量名，并输入其值
-
-#### 环境变量详解
-
-| 变量名 | 必需 | 说明 | 示例 |
-|--------|------|------|------|
-| `DOMAIN` | ✅ | Worker 部署域名 | `https://bot.example.com` |
-| `BOT_TOKEN` | ✅ | Telegram Bot Token | `123456:ABC-DEF...` |
-| `BOT_SECRET` | ✅ | Webhook 验证密钥 | 任意随机字符串 |
-| `ADMIN_UID` | ✅ | 管理员 Telegram 用户 ID | `123456789` |
-| `ADMIN_GID` | ❌ | 管理群组 ID（启用 Forum 功能可使用 Topic） | `-1001234567890` |
-| `LLM_API` | ✅ | LLM API Base URL | `https://api.openai.com/v1` |
-| `LLM_MODEL` | ✅ | LLM 模型名称 | `gpt-3.5-turbo` |
-| `LLM_KEY` | ✅ | LLM API Key | `sk-...` |
-
-
-### 步骤 7：验证部署
-
-1. **检查 Webhook 是否设置成功**：
-   - 访问：`https://api.telegram.org/bot<你的BOT_TOKEN>/getWebhookInfo`
-   - 检查 `url` 字段是否为你的 Worker URL + `/webhook`
-
-2. **测试 Bot 功能**：
-   - 在 Telegram 中向 Bot 发送消息
-   - 检查是否收到管理员转发
-   - 尝试回复转发的消息，检查是否发送给原始用户
-
-3. **测试垃圾信息检测**：
-   - 发送明显的广告或垃圾信息
-   - 检查管理群组是否收到警报
-
-
 ## 🐛 故障排查
 
 ### Bot 无响应
 
 1. 检查 Webhook 设置：访问 `https://api.telegram.org/bot<TOKEN>/getWebhookInfo`
-2. 查看 Cloudflare Workers 日志：`wrangler tail`
+2. 查看运行日志：
+   - Cloudflare：`wrangler tail`
+   - Docker：`docker compose logs -f watchdog`
 3. 确认环境变量配置正确
 
 ### 垃圾信息检测不工作
 
 1. 检查 LLM API 配置（URL、Key、Model）
-2. 查看 Worker 日志确认 API 调用是否成功
+2. 查看日志确认 API 调用是否成功
 3. 测试 API 是否可访问：`curl -H "Authorization: Bearer $LLM_KEY" $LLM_API/models`
 
 ### 管理员回复失败
 
-1. 确认消息映射已保存到 D1（检查数据库）
+1. 确认消息映射已保存到数据库（D1 控制台 / 容器内 `/data/watchdog.db`）
 2. 确认管理员在回复转发的消息，而不是直接发送新消息
 3. 检查原始用户是否屏蔽了 Bot
+
+### Docker 启动报 `node:sqlite` 错误
+
+1. 确认基础镜像是 `node:24-*`（Node 22 上 `node:sqlite` 仍是 experimental，需要 `--experimental-sqlite` flag）
+2. 本地开发用 `node --version` 检查是否 ≥ v24

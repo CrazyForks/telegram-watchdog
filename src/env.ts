@@ -1,4 +1,8 @@
-// Define environment variable types for Cloudflare Workers
+import type { DBClient } from '@/db/client';
+
+// 业务代码统一面向 DBClient。
+// - Cloudflare Workers: c.env.DB 是 D1Database，结构上满足 DBClient
+// - Docker / Node: 由 sqlite-adapter 包装 node:sqlite 后注入
 export type Env = {
   DOMAIN: string;
   BOT_TOKEN: string;
@@ -8,5 +12,5 @@ export type Env = {
   LLM_API: string;
   LLM_MODEL: string;
   LLM_KEY: string;
-  DB: D1Database;
+  DB: DBClient;
 };

@@ -1,4 +1,4 @@
-import type { D1Database } from '@cloudflare/workers-types';
+import type { DBClient } from '@/db/client';
 import type { TrustStatus, WhitelistSource } from '@/config';
 import { WHITELIST_CONFIG } from '@/config';
 
@@ -21,7 +21,7 @@ export interface UserTrust {
  * Get user trust information from database
  */
 export async function getUserTrust(
-  db: D1Database,
+  db: DBClient,
   userId: string
 ): Promise<UserTrust | null> {
   const result = await db
@@ -36,7 +36,7 @@ export async function getUserTrust(
  * Create a new user trust record
  */
 export async function createUserTrust(
-  db: D1Database,
+  db: DBClient,
   userId: string,
   username?: string
 ): Promise<void> {
@@ -53,7 +53,7 @@ export async function createUserTrust(
  * Update user's trust status
  */
 export async function updateTrustStatus(
-  db: D1Database,
+  db: DBClient,
   userId: string,
   status: TrustStatus,
   whitelistedBy?: WhitelistSource
@@ -85,7 +85,7 @@ export async function updateTrustStatus(
  * Increment consecutive clean count after a message passes AI check
  */
 export async function incrementCleanCount(
-  db: D1Database,
+  db: DBClient,
   userId: string
 ): Promise<void> {
   const now = Date.now();
@@ -103,7 +103,7 @@ export async function incrementCleanCount(
 /**
  * Record a spam message (reset consecutive count, increment total spam count)
  */
-export async function recordSpam(db: D1Database, userId: string): Promise<void> {
+export async function recordSpam(db: DBClient, userId: string): Promise<void> {
   const now = Date.now();
   await db
     .prepare(
@@ -123,7 +123,7 @@ export async function recordSpam(db: D1Database, userId: string): Promise<void> 
  * Returns true if user was promoted to whitelist
  */
 export async function checkAndPromoteToWhitelist(
-  db: D1Database,
+  db: DBClient,
   userId: string
 ): Promise<boolean> {
   const user = await getUserTrust(db, userId);
@@ -150,7 +150,7 @@ export async function checkAndPromoteToWhitelist(
  * Manually whitelist a user (by admin command)
  */
 export async function manuallyWhitelistUser(
-  db: D1Database,
+  db: DBClient,
   userId: string,
   username?: string
 ): Promise<void> {
@@ -175,7 +175,7 @@ export async function manuallyWhitelistUser(
  * Remove user from whitelist (demote to new user status)
  */
 export async function removeFromWhitelist(
-  db: D1Database,
+  db: DBClient,
   userId: string
 ): Promise<void> {
   await db
@@ -196,7 +196,7 @@ export async function removeFromWhitelist(
  * Update last message timestamp
  */
 export async function updateLastMessageTime(
-  db: D1Database,
+  db: DBClient,
   userId: string
 ): Promise<void> {
   await db

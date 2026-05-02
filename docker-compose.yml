@@ -1,0 +1,21 @@
+services:
+  watchdog:
+    image: ghcr.io/pupilcc/telegram-watchdog:latest
+    container_name: telegram-watchdog
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      DOMAIN: ${DOMAIN}
+      BOT_TOKEN: ${BOT_TOKEN}
+      BOT_SECRET: ${BOT_SECRET}
+      ADMIN_UID: ${ADMIN_UID}
+      ADMIN_GID: ${ADMIN_GID:-}
+      LLM_API: ${LLM_API}
+      LLM_MODEL: ${LLM_MODEL:-gpt-3.5-turbo}
+      LLM_KEY: ${LLM_KEY}
+    volumes:
+      - watchdog-data:/data
+
+volumes:
+  watchdog-data:
