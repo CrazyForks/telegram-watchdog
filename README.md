@@ -54,8 +54,6 @@ Telegram Watchdog 是一个功能强大的 Telegram 机器人，主要用于：
 - **Cloudflare Workers**：Cloudflare 账户（含 Workers 与 D1，免费额度即可起步）+ 一个域名（Workers 默认子域也行）
 - **Docker**：一台 Docker 主机 + 一个公网 HTTPS 域名（用反代终止 TLS）
 
----
-
 ## 🚀 部署指南
 
 本项目提供两种部署方式，二选一即可：
@@ -78,17 +76,12 @@ Telegram Watchdog 是一个功能强大的 Telegram 机器人，主要用于：
 
 1. **管理员用户 ID**：在 Telegram 中找到 [@userinfobot](https://t.me/userinfobot)，发送任意消息即可获得
 2. **管理群组 ID**（可选，推荐启用 Forum Topic 功能）：
-   - 创建一个超级群组
-   - 在群组设置中启用 "Topics"（话题）功能
-   - 将 Bot 添加到群组并设为管理员（需要 `can_manage_topics` 权限）
+   - 创建一个**超级群组**（普通群组需要先升级为超级群组）
+   - 在群组设置中启用 **Topics / 话题** 功能
+   - 将 Bot 添加到群组并设为管理员
+   - 在 Bot 的管理员权限中开启 **Manage Topics / 管理话题**（Telegram Bot API 权限名为 `can_manage_topics`）
    - 在群组内发送 `/getid`，Bot 会返回群组 ID（负数，如：`-1001234567890`）
-
-#### 3. 克隆代码
-
-```bash
-git clone <your-repo-url>
-cd telegram-watchdog
-```
+   - 将返回的群组 ID 配置为 `ADMIN_GID`
 
 ### 环境变量清单
 
@@ -106,8 +99,6 @@ cd telegram-watchdog
 | `LLM_KEY` | ✅ | LLM API Key | `sk-...` |
 | `PORT` | ❌（仅 Docker） | 容器监听端口，默认 `3000` | `3000` |
 | `DB_PATH` | ❌（仅 Docker） | SQLite 文件路径，默认 `/data/watchdog.db` | `/data/watchdog.db` |
-
----
 
 ### 方式 A：Cloudflare Workers
 
@@ -136,8 +127,6 @@ npm run deploy
 
 1. 进入 **Workers & Pages** → 选择你的 Worker → **设置** → **变量和机密**
 2. 选择 **添加** → **密钥** 类型，逐个录入上面环境变量清单中的值（除 `PORT` / `DB_PATH` 外都需要）
-
----
 
 ### 方式 B：Docker 自托管
 
@@ -199,24 +188,9 @@ docker run -d --name telegram-watchdog \
   ghcr.io/pupilcc/telegram-watchdog:latest
 ```
 
-> 如果你 fork 了仓库或本地修改了源码，可以 `docker compose up -d --build`（同时取消 [docker-compose.yml](docker-compose.yml) 里 `build: .` 的注释）从源码构建镜像。
-
 #### B4. 数据持久化
 
 SQLite 文件位于容器内 `/data/watchdog.db`，对应 `docker-compose.yml` 的 `watchdog-data` 命名 volume。`docker compose down` **不会**删除该 volume；需显式 `docker volume rm telegram-watchdog_watchdog-data` 才会清空数据。
-
-#### B5. 本地开发（不进容器）
-
-```bash
-nvm use 24                  # 或确保 node --version >= v24
-npm install
-cp .env.example .env        # DB_PATH 可改为本地路径如 ./watchdog.db
-npm run dev:node            # tsx watch，文件改动自动重启
-```
-
-可用 `ngrok http 3000` 暴露本地端口拿到 HTTPS URL，把 `DOMAIN` 改为 ngrok 地址即可联调。
-
----
 
 ### 验证部署（两种方式通用）
 
@@ -233,8 +207,6 @@ npm run dev:node            # tsx watch，文件改动自动重启
    - 回复转发的消息，检查是否发送给原始用户
 
 4. **测试垃圾信息检测**：发送明显的广告或垃圾信息，检查管理群组是否收到警报
-
----
 
 ## 📁 项目代码结构
 
@@ -537,7 +509,10 @@ export const WHITELIST_CONFIG = {
 
 2. **Bot 权限**：
    - 将 Bot 添加为群组管理员
-   - 确保 Bot 拥有 `can_manage_topics` 权限
+   - 在 Bot 的管理员权限中开启 **Manage Topics / 管理话题**（Telegram Bot API 权限名为 `can_manage_topics`）
+   - 确认 `.env` / 部署环境中的 `ADMIN_GID` 指向这个已开启 Topics 的超级群组，通常以 `-100` 开头
+
+如果日志中出现 `Bad Request: not enough rights to create a topic`，说明 Bot 已经尝试创建 Topic，但当前群组权限不足。请重新检查该 Bot 是否是目标管理群的管理员，并且是否开启了 **管理话题** 权限。
 
 ### 工作流程
 
@@ -621,8 +596,3 @@ Bot 自动识别 Topic 对应的用户
 1. 确认消息映射已保存到数据库（D1 控制台 / 容器内 `/data/watchdog.db`）
 2. 确认管理员在回复转发的消息，而不是直接发送新消息
 3. 检查原始用户是否屏蔽了 Bot
-
-### Docker 启动报 `node:sqlite` 错误
-
-1. 确认基础镜像是 `node:24-*`（Node 22 上 `node:sqlite` 仍是 experimental，需要 `--experimental-sqlite` flag）
-2. 本地开发用 `node --version` 检查是否 ≥ v24
