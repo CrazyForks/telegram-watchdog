@@ -3,7 +3,6 @@ dist/
 
 # dev
 pnpm-lock.yaml
-package-lock.json
 .yarn/
 !.yarn/releases
 .vscode/*
