@@ -17,4 +17,4 @@ VOLUME ["/data"]
 
 EXPOSE 3000
 
-CMD ["npx", "tsx", "src/server.ts"]
+CMD ["node", "--import", "tsx", "src/server.ts"]

@@ -16,27 +16,30 @@ function requireEnv(key: string): string {
   return value;
 }
 
-function buildEnv(): Env {
+function buildEnv(): { env: Env; sqlite: DatabaseSync } {
   const dbPath = process.env.DB_PATH ?? '/data/watchdog.db';
   const sqlite = new DatabaseSync(dbPath);
   sqlite.exec('PRAGMA journal_mode = WAL');
   sqlite.exec('PRAGMA foreign_keys = ON');
 
   return {
-    DOMAIN: requireEnv('DOMAIN'),
-    BOT_TOKEN: requireEnv('BOT_TOKEN'),
-    BOT_SECRET: requireEnv('BOT_SECRET'),
-    ADMIN_UID: requireEnv('ADMIN_UID'),
-    ADMIN_GID: process.env.ADMIN_GID ?? '',
-    LLM_API: requireEnv('LLM_API'),
-    LLM_MODEL: process.env.LLM_MODEL ?? 'gpt-3.5-turbo',
-    LLM_KEY: requireEnv('LLM_KEY'),
-    DB: createSqliteClient(sqlite),
+    sqlite,
+    env: {
+      DOMAIN: requireEnv('DOMAIN'),
+      BOT_TOKEN: requireEnv('BOT_TOKEN'),
+      BOT_SECRET: requireEnv('BOT_SECRET'),
+      ADMIN_UID: requireEnv('ADMIN_UID'),
+      ADMIN_GID: process.env.ADMIN_GID ?? '',
+      LLM_API: requireEnv('LLM_API'),
+      LLM_MODEL: process.env.LLM_MODEL ?? 'gpt-3.5-turbo',
+      LLM_KEY: requireEnv('LLM_KEY'),
+      DB: createSqliteClient(sqlite),
+    },
   };
 }
 
 async function main(): Promise<void> {
-  const env = buildEnv();
+  const { env, sqlite } = buildEnv();
 
   await initDatabase(env);
 
@@ -54,10 +57,24 @@ async function main(): Promise<void> {
   );
 
   const port = Number(process.env.PORT ?? 3000);
-  serve({ fetch: app.fetch, port });
+  const server = serve({ fetch: app.fetch, port });
   console.log(
     `telegram-watchdog listening on :${port} (webhook ${env.DOMAIN}${WEBHOOK_PATH})`
   );
+
+  // 容器停止时收到 SIGTERM：关掉 HTTP 服务并让 SQLite 正常 checkpoint WAL。
+  let shuttingDown = false;
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+    process.on(signal, () => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      console.log(`Received ${signal}, shutting down...`);
+      server.close(() => {
+        sqlite.close();
+        process.exit(0);
+      });
+    });
+  }
 }
 
 main().catch((err) => {
