@@ -35,6 +35,10 @@ async function handleTrustCommand(ctx: Context, env: Env): Promise<void> {
     // 2. Check if replying to a message
     const replyTo = ctx.message?.reply_to_message;
     if (!replyTo) {
+      console.warn('/trust command rejected: no replied-to message', {
+        userId: ctx.from.id,
+        chatId: ctx.chat?.id,
+      });
       await ctx.reply('❌ 请回复要信任的用户消息');
       return;
     }
@@ -47,6 +51,11 @@ async function handleTrustCommand(ctx: Context, env: Env): Promise<void> {
       .first<{ original_user_chat_id: string }>();
 
     if (!mapping) {
+      console.warn('/trust command rejected: original user not found', {
+        userId: ctx.from.id,
+        chatId: ctx.chat?.id,
+        replyToMessageId: replyTo.message_id,
+      });
       await ctx.reply('❌ 无法找到原始用户');
       return;
     }
@@ -62,7 +71,11 @@ async function handleTrustCommand(ctx: Context, env: Env): Promise<void> {
     // 5. Reply with confirmation
     await ctx.reply('✅ 用户已手动加入白名单');
   } catch (error) {
-    console.error('Error in /trust command:', error);
+    console.error('Error in /trust command:', {
+      userId: ctx.from?.id,
+      chatId: ctx.chat?.id,
+      replyToMessageId: ctx.message?.reply_to_message?.message_id,
+    }, error);
     await ctx.reply('❌ 处理命令时出错，请稍后重试');
   }
 }
@@ -80,6 +93,10 @@ async function handleUntrustCommand(ctx: Context, env: Env): Promise<void> {
     // 2. Check if replying to a message
     const replyTo = ctx.message?.reply_to_message;
     if (!replyTo) {
+      console.warn('/untrust command rejected: no replied-to message', {
+        userId: ctx.from.id,
+        chatId: ctx.chat?.id,
+      });
       await ctx.reply('❌ 请回复要取消信任的用户消息');
       return;
     }
@@ -92,6 +109,11 @@ async function handleUntrustCommand(ctx: Context, env: Env): Promise<void> {
       .first<{ original_user_chat_id: string }>();
 
     if (!mapping) {
+      console.warn('/untrust command rejected: original user not found', {
+        userId: ctx.from.id,
+        chatId: ctx.chat?.id,
+        replyToMessageId: replyTo.message_id,
+      });
       await ctx.reply('❌ 无法找到原始用户');
       return;
     }
@@ -104,7 +126,11 @@ async function handleUntrustCommand(ctx: Context, env: Env): Promise<void> {
     // 5. Reply with confirmation
     await ctx.reply('⚠️ 用户已移除白名单，重新进入监控');
   } catch (error) {
-    console.error('Error in /untrust command:', error);
+    console.error('Error in /untrust command:', {
+      userId: ctx.from?.id,
+      chatId: ctx.chat?.id,
+      replyToMessageId: ctx.message?.reply_to_message?.message_id,
+    }, error);
     await ctx.reply('❌ 处理命令时出错，请稍后重试');
   }
 }

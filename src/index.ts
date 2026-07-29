@@ -25,6 +25,7 @@ app.use(async (c, next) => {
 
 app.post(WEBHOOK_PATH, async (c) => {
   if (!bot) {
+    console.error('Webhook request failed: bot not initialized');
     return c.text('Internal Server Error: Bot not initialized', 500);
   }
   const handler = webhookCallback(bot, 'hono', { secretToken: c.env.BOT_SECRET });

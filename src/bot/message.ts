@@ -79,6 +79,10 @@ export const messageHandler = (env: Env) => async (ctx: Context) => {
         ).run();
       }
     } catch (error) {
+      console.error('Failed to relay user message to admin:', {
+        senderId,
+        chatId,
+      }, error);
       await ctx.reply('抱歉，消息发送失败，请稍后重试。');
     }
 
@@ -90,6 +94,10 @@ export const messageHandler = (env: Env) => async (ctx: Context) => {
     const replyToMessage = ctx.message?.reply_to_message;
 
     if (!replyToMessage) {
+      console.warn('Admin private reply rejected: no replied-to message', {
+        senderId,
+        chatId,
+      });
       await ctx.reply('请回复一条用户消息以发送回复。');
       return;
     }
@@ -102,6 +110,11 @@ export const messageHandler = (env: Env) => async (ctx: Context) => {
       `).bind(replyToMessage.message_id).first<{ original_user_chat_id: string }>();
 
       if (!result) {
+        console.warn('Admin private reply rejected: original user not found', {
+          senderId,
+          chatId,
+          replyToMessageId: replyToMessage.message_id,
+        });
         await ctx.reply('无法找到原始用户信息。');
         return;
       }
@@ -111,6 +124,11 @@ export const messageHandler = (env: Env) => async (ctx: Context) => {
         `${msg}`
       );
     } catch (error) {
+      console.error('Failed to relay admin private reply to user:', {
+        senderId,
+        chatId,
+        replyToMessageId: replyToMessage.message_id,
+      }, error);
       await ctx.reply('❌ 回复发送失败，请检查用户是否已屏蔽机器人。');
     }
 
@@ -159,6 +177,12 @@ export const messageHandler = (env: Env) => async (ctx: Context) => {
         `${msg}`
       );
     } catch (error) {
+      console.error('Failed to relay admin topic message to user:', {
+        senderId,
+        chatId,
+        messageThreadId,
+        replyToMessageId: replyToMessage?.message_id,
+      }, error);
       await ctx.reply('❌ 回复发送失败，请检查用户是否已屏蔽机器人。');
     }
 

@@ -23,6 +23,10 @@ export const messageFilterMiddleware = (env: Env) => async (ctx: Context, next: 
   const senderUser = ctx.from;
 
   if (!senderUser) {
+    console.warn('Message filter skipped: sender information missing', {
+      updateId: ctx.update.update_id,
+      chatId: ctx.chat?.id,
+    });
     await ctx.reply('222');
     await next();
     return;
@@ -111,6 +115,11 @@ export const messageFilterMiddleware = (env: Env) => async (ctx: Context, next: 
       }
 
       // 警告发送者
+      console.warn('Message blocked as spam', {
+        senderId,
+        chatId,
+        judgment,
+      });
       await ctx.reply(
         "您的消息因包含垃圾信息已被过滤。如有疑问，请联系管理员。",
         { reply_to_message_id: ctx.message.message_id }
@@ -137,6 +146,10 @@ export const messageFilterMiddleware = (env: Env) => async (ctx: Context, next: 
     await next();
   } catch (error) {
     // 出错时默认放行消息，避免误杀
+    console.error('Message filter middleware failed:', {
+      senderId,
+      chatId,
+    }, error);
     await ctx.reply('抱歉，中间件处理失败');
     // await next();
   }
